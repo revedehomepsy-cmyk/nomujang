@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String         @id @default(cuid())
+  email          String         @unique
+  passwordHash   String
+  name           String
+  phone          String?
+  role           String         // Role: SITE_MANAGER | FOREMAN | ADMIN
+  rrnLast7       String?        // 주민번호 뒷7자리 (일용직 신고용, 선택)
+  bankName       String?
+  bankAccount    String?
+  isTeamLead     Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+
+  dailyLogsAdded DailyLog[]     @relation("CreatedDailyLogs")
+  attendances    Attendance[]
+  workUnits      WorkUnit[]     @relation("ForemanWorkUnits")
+  workUnitsAdded WorkUnit[]     @relation("CreatedWorkUnits")
+}
+
+model Project {
+  id          String       @id @default(cuid())
+  name        String
+  address     String?
+  startDate   DateTime?
+  endDate     DateTime?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+
+  dailyLogs   DailyLog[]
+  workUnits   WorkUnit[]
+  attendances Attendance[]
+}
+
+model WorkType {
+  id        String     @id @default(cuid())
+  name      String     @unique // 철근, 형틀, 미장 등
+  createdAt DateTime   @default(now())
+
+  dailyLogs DailyLog[]
+  workUnits WorkUnit[]
+}
+
+// 현장소장이 작성: 날짜/공정/프로젝트별 반장님 + 총작업자수
+model DailyLog {
+  id           String   @id @default(cuid())
+  date         DateTime
+  projectId    String
+  workTypeId   String
+  foremanName  String   // 반장님 이름 (free text)
+  foremanId    String?  // 만약 시스템에 가입된 반장이면 연결
+  workerCount  Int      // 총 작업자 수
+  notes        String?
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workType  WorkType  @relation(fields: [workTypeId], references: [id])
+  createdBy User      @relation("CreatedDailyLogs", fields: [createdById], references: [id])
+
+  @@index([date, projectId, workTypeId])
+}
+
+// 반장 출퇴근 (얼굴 사진 첨부)
+model Attendance {
+  id         String         @id @default(cuid())
+  userId     String
+  projectId  String
+  type       String         // CHECK_IN | CHECK_OUT
+  photoData  String         // base64 data url
+  latitude   Float?
+  longitude  Float?
+  capturedAt DateTime       @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId, capturedAt])
+  @@index([projectId, capturedAt])
+}
+
+// 반장(팀장)이 작성: 총품수 및 비용
+model WorkUnit {
+  id          String   @id @default(cuid())
+  date        DateTime
+  projectId   String
+  workTypeId  String
+  foremanId   String   // 작성자(팀장 반장)
+  units       Float    // 총 품수
+  unitPrice   Float    // 품당 단가
+  totalCost   Float    // 총 비용 (units * unitPrice 또는 직접 입력)
+  notes       String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workType  WorkType @relation(fields: [workTypeId], references: [id])
+  foreman   User     @relation("ForemanWorkUnits", fields: [foremanId], references: [id])
+  createdBy User     @relation("CreatedWorkUnits", fields: [createdById], references: [id])
+
+  @@index([date, projectId])
+}
+
+// 세무사 보낼 월별 리포트
+model TaxReport {
+  id            String       @id @default(cuid())
+  yearMonth     String       // "2026-05"
+  type          String       // DAILY_LABOR | BUSINESS_INCOME
+  recipientEmail String
+  status        String       @default("DRAFT")
+  sentAt        DateTime?
+  notes         String?
+  createdAt     DateTime     @default(now())
+
+  items TaxReportItem[]
+}
+
+model TaxReportItem {
+  id           String   @id @default(cuid())
+  reportId     String
+  foremanName  String
+  rrnLast7     String?
+  workDays     Int      @default(0)
+  grossPay     Float    // 지급액 (총)
+  incomeTax    Float    @default(0) // 소득세
+  localTax     Float    @default(0) // 지방소득세
+  pension      Float    @default(0) // 국민연금 (일용직은 일반적으로 면제)
+  health       Float    @default(0) // 건강보험
+  employment   Float    @default(0) // 고용보험
+  industrial   Float    @default(0) // 산재보험 (사업주 부담)
+  netPay       Float    // 실수령액
+  edited       Boolean  @default(false)
+
+  report TaxReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+}
